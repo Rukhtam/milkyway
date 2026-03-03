@@ -58,9 +58,11 @@
         .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
         .transition-all-300 { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         
-        header { padding-top: env(safe-area-inset-top, 0px); }
-        @media (display-mode: standalone) {
-            body { padding-top: 0; }
+        html {
+            padding-top: env(safe-area-inset-top, 0px);
+        }
+        header {
+            padding-top: env(safe-area-inset-top, 0px);
         }
     </style>
 </head>
@@ -453,7 +455,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.2
+                        MilkyWay 🥛 Version 2.3
                     </footer>
                 </div>
             );
