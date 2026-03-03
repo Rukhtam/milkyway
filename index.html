@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <!-- iOS Web App Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MilkyWay">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    
+    <title>MilkyWay Tracker</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- React and Babel for standalone execution -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        input[type="time"] {
+            -webkit-appearance: none;
+            min-height: 1.5em;
+        }
+        
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            filter: invert(48%) sepia(13%) saturate(3207%) hue-rotate(190deg) brightness(95%) contrast(80%);
+        }
+        .dark input[type="time"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+        }
+        
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        .transition-all-300 { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        @media (display-mode: standalone) {
+            header { padding-top: env(safe-area-inset-top); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        const Icon = ({ name, className, size = 20 }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    const kebabName = name.replace(/([a-z])([A-Z0-9])/g, '$1-$2').toLowerCase();
+                    const i = document.createElement('i');
+                    i.setAttribute('data-lucide', kebabName);
+                    if (className) i.setAttribute('class', className);
+                    i.style.width = `${size}px`;
+                    i.style.height = `${size}px`;
+                    iconRef.current.innerHTML = '';
+                    iconRef.current.appendChild(i);
+                    window.lucide.createIcons({ root: iconRef.current });
+                }
+            }, [name, className, size]);
+            return <span ref={iconRef} className="inline-flex items-center justify-center pointer-events-none" style={{ width: size, height: size }}></span>;
+        };
+
+        const App = () => {
+            const [entries, setEntries] = useState(() => JSON.parse(localStorage.getItem('milk_entries') || '[]'));
+            const [pricePerKilo, setPricePerKilo] = useState(() => parseFloat(localStorage.getItem('milk_price') || '220'));
+            const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('milk_theme') === 'dark');
+            const [reminderTime, setReminderTime] = useState(() => localStorage.getItem('milk_reminder_time') || "11:00");
+            const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('milk_notifications_enabled') === 'true');
+            const [lastNotifiedDate, setLastNotifiedDate] = useState(() => localStorage.getItem('milk_last_notified') || "");
+            
+            const [viewDate, setViewDate] = useState(new Date());
+            const [showSettings, setShowSettings] = useState(false);
+            const [entryModal, setEntryModal] = useState({ show: false, date: null });
+            const [showCustomInput, setShowCustomInput] = useState(false);
+            const [customVal, setCustomVal] = useState("");
+            const [statusMessage, setStatusMessage] = useState(null);
+            const [isLogCollapsed, setIsLogCollapsed] = useState(true);
+
+            useEffect(() => {
+                if (isDarkMode) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+                localStorage.setItem('milk_theme', isDarkMode ? 'dark' : 'light');
+            }, [isDarkMode]);
+
+            useEffect(() => {
+                localStorage.setItem('milk_entries', JSON.stringify(entries));
+                localStorage.setItem('milk_price', pricePerKilo);
+                localStorage.setItem('milk_reminder_time', reminderTime);
+                localStorage.setItem('milk_notifications_enabled', notificationsEnabled);
+                localStorage.setItem('milk_last_notified', lastNotifiedDate);
+            }, [entries, pricePerKilo, reminderTime, notificationsEnabled, lastNotifiedDate]);
+
+            const showStatus = (msg, type) => {
+                setStatusMessage({ msg, type });
+                setTimeout(() => setStatusMessage(null), 3000);
+            };
+
+            const requestNotificationPermission = async () => {
+                if (!("Notification" in window)) {
+                    showStatus("Not supported on this browser", "error");
+                    return false;
+                }
+                const permission = await Notification.requestPermission();
+                if (permission === "granted") {
+                    setNotificationsEnabled(true);
+                    showStatus("Reminders Enabled", "success");
+                    return true;
+                }
+                return false;
+            };
+
+            const calendarDays = useMemo(() => {
+                const year = viewDate.getFullYear();
+                const month = viewDate.getMonth();
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const days = [];
+                for (let i = 1; i <= daysInMonth; i++) {
+                    const date = new Date(year, month, i);
+                    const dateStr = date.toISOString().split('T')[0];
+                    days.push({
+                        dateStr,
+                        day: i,
+                        weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
+                        isToday: dateStr === new Date().toISOString().split('T')[0]
+                    });
+                }
+                return days;
+            }, [viewDate]);
+
+            const currentMonthEntries = useMemo(() => {
+                return entries.filter(e => {
+                    const d = new Date(e.date);
+                    return d.getMonth() === viewDate.getMonth() && d.getFullYear() === viewDate.getFullYear();
+                });
+            }, [entries, viewDate]);
+
+            const stats = useMemo(() => {
+                const totalKilos = currentMonthEntries.reduce((sum, e) => sum + e.amount, 0);
+                return { totalKilos, totalBill: totalKilos * pricePerKilo };
+            }, [currentMonthEntries, pricePerKilo]);
+
+            const addEntry = (amount, dateOverride = null) => {
+                const targetDate = dateOverride || entryModal.date || new Date().toISOString().split('T')[0];
+                setEntries(prev => {
+                    const filtered = prev.filter(e => e.date !== targetDate);
+                    const updated = [...filtered, { date: targetDate, amount }];
+                    return updated.sort((a, b) => a.date.localeCompare(b.date));
+                });
+                setEntryModal({ show: false, date: null });
+                setShowCustomInput(false);
+                setCustomVal("");
+                showStatus("Logged successfully!", "success");
+            };
+
+            const deleteEntry = (date) => setEntries(prev => prev.filter(e => e.date !== date));
+            const changeMonth = (offset) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1));
+
+            const copyBillToClipboard = () => {
+                const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+                const breakdown = currentMonthEntries
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map(e => `${new Date(e.date).getDate()}: ${e.amount === 0 ? 'No Milk' : e.amount + ' Kilos'}`)
+                    .join('\n');
+
+                const text = `🥛 Milk Bill - ${monthName}\n\nTotal Kilos: ${stats.totalKilos}\nRate: PKR ${pricePerKilo}\nTotal Amount: PKR ${stats.totalBill.toLocaleString()}\n\nDaily Records:\n${breakdown}\n\nGenerated via MilkyWay`;
+                
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showStatus("Bill copied for WhatsApp!", "success");
+            };
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            const loggedToday = entries.find(e => e.date === todayStr);
+
+            return (
+                <div className="min-h-screen text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-300">
+                    
+                    {statusMessage && (
+                        <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-[70] px-6 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 animate-bounce border ${
+                            statusMessage.type === 'success' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'
+                        }`}>
+                            <Icon name={statusMessage.type === 'success' ? 'CheckCircle2' : 'X'} size={16} />
+                            {statusMessage.msg}
+                        </div>
+                    )}
+
+                    <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 px-6 py-4">
+                        <div className="max-w-md mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 dark:shadow-none">
+                                    <Icon name="Milk" className="text-white" />
+                                </div>
+                                <h1 className="text-xl font-extrabold tracking-tight">MilkyWay</h1>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors duration-200">
+                                    {isDarkMode ? <Icon name="Sun" className="text-amber-400" /> : <Icon name="Moon" className="text-slate-500" />}
+                                </button>
+                                <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors duration-200">
+                                    <Icon name="Settings" className="text-slate-500" />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-md mx-auto px-6 py-8">
+                        <div className="flex items-center justify-between mb-8 bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm transition-colors duration-300">
+                            <button onClick={() => changeMonth(-1)} className="p-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors">
+                                <Icon name="ChevronLeft" />
+                            </button>
+                            <div className="text-center">
+                                <h2 className="text-base font-extrabold">{viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
+                            </div>
+                            <button onClick={() => changeMonth(1)} className="p-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors">
+                                <Icon name="ChevronRight" />
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mb-10">
+                            <div className="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-blue-100 dark:shadow-none">
+                                <div className="flex justify-between items-start mb-4">
+                                    <Icon name="TrendingUp" className="opacity-40" />
+                                </div>
+                                <div className="text-4xl font-black mb-1">{stats.totalKilos}</div>
+                                <div className="text-[10px] font-bold uppercase tracking-widest opacity-70 text-blue-50">Total Kilos</div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-900 p-6 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm relative overflow-hidden transition-colors duration-300">
+                                <Icon name="Calculator" className="mb-4 text-emerald-500" />
+                                <div className="text-3xl font-black text-slate-800 dark:text-slate-100 transition-colors">PKR {stats.totalBill.toLocaleString()}</div>
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">Expected Bill</div>
+                                {currentMonthEntries.length > 0 && (
+                                    <button onClick={copyBillToClipboard} className="absolute top-4 right-4 p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full hover:scale-110 transition-transform">
+                                        <Icon name="Share2" size={16} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {viewDate.getMonth() === new Date().getMonth() && viewDate.getFullYear() === new Date().getFullYear() && (
+                            <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-blue-50 dark:border-slate-800 mb-8 shadow-sm transition-colors duration-300">
+                                <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
+                                    Today's Entry
+                                </h3>
+                                {loggedToday && !showCustomInput ? (
+                                    <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800/50">
+                                        <div className="flex items-center gap-3 text-blue-700 dark:text-blue-300">
+                                            <Icon name="CheckCircle2" />
+                                            <span className="font-bold">{loggedToday.amount === 0 ? "Skipped Today" : `${loggedToday.amount} Kilos Logged`}</span>
+                                        </div>
+                                        <button onClick={() => setShowCustomInput(true)} className="text-blue-500 font-bold text-xs px-3 py-1.5 bg-white dark:bg-slate-800 rounded-lg shadow-sm active:scale-95 transition-transform">Edit</button>
+                                    </div>
+                                ) : !showCustomInput ? (
+                                    <div className="grid grid-cols-5 gap-2">
+                                        <button onClick={() => addEntry(0)} className="flex flex-col items-center justify-center aspect-square rounded-2xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 transition-colors"><Icon name="Ban" size={18} /></button>
+                                        {[1, 2, 3].map(v => (
+                                            <button key={v} onClick={() => addEntry(v)} className="flex flex-col items-center justify-center aspect-square rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold text-lg hover:bg-blue-100 transition-colors">{v}</button>
+                                        ))}
+                                        <button onClick={() => setShowCustomInput(true)} className="flex flex-col items-center justify-center aspect-square rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400"><Icon name="Edit3" size={18} /></button>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2 animate-in slide-in-from-top-2">
+                                        <input autoFocus type="number" step="0.5" value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                                        <button onClick={() => addEntry(parseFloat(customVal) || 0)} className="bg-blue-600 text-white px-6 rounded-2xl font-bold active:scale-95 transition-all">Add</button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="mt-4">
+                            <button 
+                                onClick={() => setIsLogCollapsed(!isLogCollapsed)}
+                                className="w-full flex items-center justify-between mb-4 px-2 hover:bg-slate-100 dark:hover:bg-slate-900 p-3 rounded-2xl transition-colors duration-200"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Monthly Records</h3>
+                                    <span className="text-[10px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
+                                        {currentMonthEntries.length} Saved
+                                    </span>
+                                </div>
+                                <div className={`transition-transform duration-300 ${isLogCollapsed ? '' : 'rotate-180'}`}>
+                                    <Icon name="ChevronDown" className="text-slate-300" />
+                                </div>
+                            </button>
+                            
+                            <div className={`space-y-3 overflow-hidden transition-all-300 ${isLogCollapsed ? 'max-h-0 opacity-0' : 'max-h-[4000px] opacity-100'}`}>
+                                {calendarDays.map(day => {
+                                    const entry = entries.find(e => e.date === day.dateStr);
+                                    const isFuture = new Date(day.dateStr) > new Date();
+                                    const isToday = day.isToday;
+                                    
+                                    return (
+                                        <div key={day.dateStr} className={`group flex items-center justify-between p-4 rounded-3xl border transition-all duration-300 ${
+                                            entry ? (entry.amount === 0 ? 'bg-red-50/30 dark:bg-red-900/10 border-red-100 dark:border-red-900/20' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm') 
+                                            : (isFuture ? 'opacity-30 grayscale pointer-events-none' : 'bg-slate-100/50 dark:bg-slate-900/30 border-dashed border-slate-200 dark:border-slate-800')
+                                        }`}>
+                                            <div className="flex items-center gap-4">
+                                                <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center font-black transition-colors ${
+                                                    isToday ? 'bg-blue-600 text-white shadow-lg shadow-blue-100 dark:shadow-none' : 
+                                                    (entry ? 'bg-slate-100 dark:bg-slate-800 text-slate-500' : 'bg-white dark:bg-slate-900 text-slate-300')
+                                                }`}>
+                                                    <span className="text-xs">{day.day}</span>
+                                                    <span className="text-[8px] uppercase">{day.weekday}</span>
+                                                </div>
+                                                
+                                                <div>
+                                                    {entry ? (
+                                                        <>
+                                                            <div className={`font-bold transition-colors ${entry.amount === 0 ? 'text-red-500 italic' : 'text-slate-800 dark:text-slate-200'}`}>
+                                                                {entry.amount === 0 ? 'Skipped Delivery' : `${entry.amount} Kilos`}
+                                                            </div>
+                                                            {entry.amount > 0 && <div className="text-[10px] font-bold text-slate-400">PKR {(entry.amount * pricePerKilo).toLocaleString()}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <div className="text-sm font-medium text-slate-300 italic">No record</div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-1">
+                                                {entry ? (
+                                                    <button onClick={() => deleteEntry(day.dateStr)} className="p-3 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100">
+                                                        <Icon name="Trash2" size={16} />
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => setEntryModal({ show: true, date: day.dateStr })} className="p-3 bg-blue-600 text-white rounded-2xl shadow-md active:scale-90 transition-all">
+                                                        <Icon name="Plus" size={18} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {isLogCollapsed && (
+                                <button 
+                                    onClick={() => setIsLogCollapsed(false)}
+                                    className="w-full py-5 text-xs font-bold text-slate-400 bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm hover:text-blue-500 transition-colors duration-300 flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="Calendar" size={14} />
+                                    Review Entire Month
+                                </button>
+                            )}
+                        </div>
+                    </main>
+
+                    {entryModal.show && (
+                        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-950/60 backdrop-blur-md">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl border-t dark:border-slate-800 animate-slide-up transition-colors duration-300 pb-12 sm:pb-8">
+                                <div className="flex items-center justify-between mb-8">
+                                    <div>
+                                        <h2 className="text-2xl font-black">Log Delivery</h2>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
+                                            {new Date(entryModal.date).toLocaleDateString('default', { day: 'numeric', month: 'long' })}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setEntryModal({ show: false, date: null })} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                                        <Icon name="X" />
+                                    </button>
+                                </div>
+                                
+                                <div className="grid grid-cols-4 gap-2 mb-6">
+                                    <button onClick={() => addEntry(0)} className="flex flex-col items-center justify-center aspect-square rounded-2xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100"><Icon name="Ban" size={18} /></button>
+                                    {[1, 2, 3].map(v => (
+                                        <button key={v} onClick={() => addEntry(v)} className="flex flex-col items-center justify-center aspect-square rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold text-lg hover:bg-blue-100">{v}</button>
+                                    ))}
+                                </div>
+
+                                <div className="flex gap-2 mb-4">
+                                    <input autoFocus type="number" step="0.5" value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                                    <button onClick={() => addEntry(parseFloat(customVal) || 0)} className="bg-blue-600 text-white px-6 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">Add</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showSettings && (
+                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-950/60 backdrop-blur-md">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl border dark:border-slate-800 animate-slide-up transition-colors duration-300 pb-12 sm:pb-8">
+                                <div className="flex items-center justify-between mb-8">
+                                    <h2 className="text-2xl font-black">Settings</h2>
+                                    <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                                        <Icon name="X" />
+                                    </button>
+                                </div>
+                                
+                                <div className="space-y-6">
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 block">Price per Kilo</label>
+                                        <div className="relative">
+                                            <input type="number" value={pricePerKilo} onChange={e => setPricePerKilo(parseFloat(e.target.value) || 0)} className="w-full bg-slate-50 dark:bg-slate-950 rounded-2xl px-5 py-4 font-bold text-xl border-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                                            <span className="absolute right-5 top-1/2 -translate-y-1/2 font-black text-slate-300 dark:text-slate-700 italic uppercase">PKR</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-6 border-t dark:border-slate-800">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <span className="font-bold flex items-center gap-2 font-black text-sm uppercase tracking-tighter">
+                                                <Icon name="Bell" size={16} className="text-blue-500" /> Daily Reminder
+                                            </span>
+                                            <button onClick={() => notificationsEnabled ? setNotificationsEnabled(false) : requestNotificationPermission()} className={`w-12 h-6 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                                                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${notificationsEnabled ? 'left-7' : 'left-1'}`} />
+                                            </button>
+                                        </div>
+                                        {notificationsEnabled && (
+                                            <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl animate-in slide-in-from-top-2">
+                                                <Icon name="Clock" size={16} className="text-slate-400" />
+                                                <input type="time" value={reminderTime} onChange={e => setReminderTime(e.target.value)} className="bg-transparent border-none font-bold text-sm focus:ring-0 p-0 flex-1 text-slate-900 dark:text-white" />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <button onClick={() => setShowSettings(false)} className="w-full mt-10 bg-blue-600 text-white font-extrabold py-5 rounded-[1.5rem] shadow-xl hover:scale-[1.02] transition-all">Done</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
+                        MilkyWay 🥛 Version 2.2
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+
+    <!-- Register Service Worker for PWA -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('SW registered:', reg.scope))
+                    .catch(err => console.log('SW registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>
