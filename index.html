@@ -251,11 +251,13 @@
                 <div className="min-h-screen text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-300">
                     
                     {statusMessage && (
-                        <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] px-6 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 animate-bounce border ${
-                            statusMessage.type === 'success' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'
-                        }`}>
-                            <Icon name={statusMessage.type === 'success' ? 'CheckCircle2' : 'X'} size={16} />
-                            {statusMessage.msg}
+                        <div className="fixed inset-0 z-[70] flex justify-center items-start pointer-events-none" style={{paddingTop: 'calc(env(safe-area-inset-top, 0px) + 5rem)'}}>
+                            <div className={`px-6 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 border pointer-events-auto ${
+                                statusMessage.type === 'success' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'
+                            }`}>
+                                <Icon name={statusMessage.type === 'success' ? 'CheckCircle2' : 'X'} size={16} />
+                                {statusMessage.msg}
+                            </div>
                         </div>
                     )}
 
@@ -493,7 +495,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.5
+                        MilkyWay 🥛 Version 2.6
                     </footer>
                 </div>
             );
