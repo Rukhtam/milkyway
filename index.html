@@ -149,6 +149,37 @@
                 return false;
             };
 
+            // Notification reminder logic — checks every 30s
+            useEffect(() => {
+                if (!notificationsEnabled) return;
+                const checkReminder = () => {
+                    const now = new Date();
+                    const todayLocal = toLocalDateStr(now);
+                    // Already notified today
+                    if (lastNotifiedDate === todayLocal) return;
+                    // Already logged today
+                    const loggedToday = entries.find(e => e.date === todayLocal);
+                    if (loggedToday) return;
+                    // Check if current time >= reminder time
+                    const [rHour, rMin] = reminderTime.split(':').map(Number);
+                    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                    const reminderMinutes = rHour * 60 + rMin;
+                    if (currentMinutes >= reminderMinutes) {
+                        if (Notification.permission === 'granted') {
+                            new Notification('MilkyWay Reminder 🥛', {
+                                body: "You haven't logged today's milk delivery yet!",
+                                icon: 'icons/icon-192.png',
+                                tag: 'milk-reminder'
+                            });
+                            setLastNotifiedDate(todayLocal);
+                        }
+                    }
+                };
+                checkReminder();
+                const interval = setInterval(checkReminder, 30000);
+                return () => clearInterval(interval);
+            }, [notificationsEnabled, reminderTime, entries, lastNotifiedDate]);
+
             const calendarDays = useMemo(() => {
                 const year = viewDate.getFullYear();
                 const month = viewDate.getMonth();
@@ -220,7 +251,7 @@
                 <div className="min-h-screen text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-300">
                     
                     {statusMessage && (
-                        <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-[70] px-6 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 animate-bounce border ${
+                        <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] px-6 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 animate-bounce border ${
                             statusMessage.type === 'success' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'
                         }`}>
                             <Icon name={statusMessage.type === 'success' ? 'CheckCircle2' : 'X'} size={16} />
@@ -462,7 +493,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.4
+                        MilkyWay 🥛 Version 2.5
                     </footer>
                 </div>
             );
