@@ -90,6 +90,13 @@
             return <span ref={iconRef} className="inline-flex items-center justify-center pointer-events-none" style={{ width: size, height: size }}></span>;
         };
 
+        const toLocalDateStr = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
         const App = () => {
             const [entries, setEntries] = useState(() => JSON.parse(localStorage.getItem('milk_entries') || '[]'));
             const [pricePerKilo, setPricePerKilo] = useState(() => parseFloat(localStorage.getItem('milk_price') || '220'));
@@ -149,12 +156,12 @@
                 const days = [];
                 for (let i = 1; i <= daysInMonth; i++) {
                     const date = new Date(year, month, i);
-                    const dateStr = date.toISOString().split('T')[0];
+                    const dateStr = toLocalDateStr(date);
                     days.push({
                         dateStr,
                         day: i,
                         weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-                        isToday: dateStr === new Date().toISOString().split('T')[0]
+                        isToday: dateStr === toLocalDateStr(new Date())
                     });
                 }
                 return days;
@@ -173,7 +180,7 @@
             }, [currentMonthEntries, pricePerKilo]);
 
             const addEntry = (amount, dateOverride = null) => {
-                const targetDate = dateOverride || entryModal.date || new Date().toISOString().split('T')[0];
+                const targetDate = dateOverride || entryModal.date || toLocalDateStr(new Date());
                 setEntries(prev => {
                     const filtered = prev.filter(e => e.date !== targetDate);
                     const updated = [...filtered, { date: targetDate, amount }];
@@ -206,7 +213,7 @@
                 showStatus("Bill copied for WhatsApp!", "success");
             };
 
-            const todayStr = new Date().toISOString().split('T')[0];
+            const todayStr = toLocalDateStr(new Date());
             const loggedToday = entries.find(e => e.date === todayStr);
 
             return (
@@ -455,7 +462,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.3
+                        MilkyWay 🥛 Version 2.4
                     </footer>
                 </div>
             );
