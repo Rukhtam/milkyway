@@ -119,6 +119,7 @@
             const [statusMessage, setStatusMessage] = useState(null);
             const [isLogCollapsed, setIsLogCollapsed] = useState(true);
             const [priceDraft, setPriceDraft] = useState(() => String(parseFloat(localStorage.getItem('milk_price') || '220')));
+            const fileInputRef = useRef(null);
 
             useEffect(() => {
                 if (isDarkMode) {
@@ -259,6 +260,64 @@
                 } catch (err) {
                     showStatus("Failed to copy bill", "error");
                 }
+            };
+
+            const exportData = () => {
+                const payload = {
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    data: { entries, pricePerKilo, reminderTime }
+                };
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `milkyway-backup-${toLocalDateStr(new Date())}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showStatus("Backup downloaded", "success");
+            };
+
+            const isValidBackup = (obj) => {
+                if (!obj || typeof obj !== 'object' || !obj.data || typeof obj.data !== 'object') return false;
+                const { entries: es, pricePerKilo: p, reminderTime: r } = obj.data;
+                if (!Array.isArray(es)) return false;
+                const entryOk = (e) =>
+                    e && typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date) &&
+                    typeof e.amount === 'number' && e.amount >= 0 && Number.isFinite(e.amount);
+                if (!es.every(entryOk)) return false;
+                if (typeof p !== 'number' || !Number.isFinite(p) || p < 0) return false;
+                if (typeof r !== 'string' || !/^\d{2}:\d{2}$/.test(r)) return false;
+                return true;
+            };
+
+            const handleImportFile = (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        const obj = JSON.parse(reader.result);
+                        if (!isValidBackup(obj)) {
+                            showStatus("Invalid backup file", "error");
+                            return;
+                        }
+                        const count = obj.data.entries.length;
+                        if (!window.confirm(`Import ${count} entr${count === 1 ? 'y' : 'ies'}? This will overwrite your current data.`)) return;
+                        const sorted = [...obj.data.entries].sort((a, b) => a.date.localeCompare(b.date));
+                        setEntries(sorted);
+                        setPricePerKilo(obj.data.pricePerKilo);
+                        setPriceDraft(String(obj.data.pricePerKilo));
+                        setReminderTime(obj.data.reminderTime);
+                        showStatus("Backup restored", "success");
+                    } catch {
+                        showStatus("Couldn't read backup", "error");
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = '';
             };
 
             const todayStr = toLocalDateStr(new Date());
@@ -517,6 +576,21 @@
                                             </div>
                                         )}
                                     </div>
+
+                                    <div className="pt-6 border-t dark:border-slate-800">
+                                        <div className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                            <Icon name="Database" size={12} className="text-blue-500" /> Data
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <button onClick={exportData} className="flex items-center justify-center gap-2 bg-slate-50 dark:bg-slate-950 py-3 rounded-2xl font-bold text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors active:scale-95">
+                                                <Icon name="Download" size={16} className="text-blue-500" /> Export
+                                            </button>
+                                            <button onClick={() => fileInputRef.current && fileInputRef.current.click()} className="flex items-center justify-center gap-2 bg-slate-50 dark:bg-slate-950 py-3 rounded-2xl font-bold text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors active:scale-95">
+                                                <Icon name="Upload" size={16} className="text-emerald-500" /> Import
+                                            </button>
+                                        </div>
+                                        <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleImportFile} className="hidden" />
+                                    </div>
                                 </div>
 
                                 <button onClick={() => setShowSettings(false)} className="w-full mt-10 bg-blue-600 text-white font-extrabold py-5 rounded-[1.5rem] shadow-xl hover:scale-[1.02] transition-all">Done</button>
@@ -525,7 +599,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.8
+                        MilkyWay 🥛 Version 2.9
                     </footer>
                 </div>
             );
