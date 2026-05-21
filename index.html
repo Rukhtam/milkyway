@@ -233,7 +233,7 @@
             const deleteEntry = (date) => setEntries(prev => prev.filter(e => e.date !== date));
             const changeMonth = (offset) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1));
 
-            const copyBillToClipboard = () => {
+            const copyBillToClipboard = async () => {
                 const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
                 const breakdown = currentMonthEntries
                     .sort((a, b) => a.date.localeCompare(b.date))
@@ -241,14 +241,24 @@
                     .join('\n');
 
                 const text = `🥛 Milk Bill - ${monthName}\n\nTotal Kilos: ${stats.totalKilos}\nRate: PKR ${pricePerKilo}\nTotal Amount: PKR ${stats.totalBill.toLocaleString()}\n\nDaily Records:\n${breakdown}\n\nGenerated via MilkyWay`;
-                
-                const textArea = document.createElement("textarea");
-                textArea.value = text;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-                showStatus("Bill copied for WhatsApp!", "success");
+
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = text;
+                        textArea.style.position = "fixed";
+                        textArea.style.opacity = "0";
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                    }
+                    showStatus("Bill copied for WhatsApp!", "success");
+                } catch (err) {
+                    showStatus("Failed to copy bill", "error");
+                }
             };
 
             const todayStr = toLocalDateStr(new Date());
@@ -515,7 +525,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.7
+                        MilkyWay 🥛 Version 2.8
                     </footer>
                 </div>
             );

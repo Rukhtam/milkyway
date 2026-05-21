@@ -1,4 +1,4 @@
-const CACHE_NAME = 'milkyway-v2.7';
+const CACHE_NAME = 'milkyway-v2.8';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -29,11 +29,14 @@ self.addEventListener('activate', event => {
     self.clients.claim();
 });
 
-// Fetch: network-first for CDN resources, cache-first for app shell
+// Fetch strategy:
+//   - CDN (cross-origin): network-first, fall back to cache.
+//   - HTML navigations: network-first so new deploys are picked up promptly,
+//     fall back to cache (then index.html) when offline.
+//   - Other same-origin assets (icons, manifest): cache-first.
 self.addEventListener('fetch', event => {
     const url = new URL(event.request.url);
 
-    // For CDN resources (Tailwind, React, Lucide, fonts) - network first, fall back to cache
     if (url.origin !== location.origin) {
         event.respondWith(
             fetch(event.request)
@@ -47,7 +50,19 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // For app shell - cache first, fall back to network
+    if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+        event.respondWith(
+            fetch(event.request)
+                .then(response => {
+                    const clone = response.clone();
+                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+                    return response;
+                })
+                .catch(() => caches.match(event.request).then(c => c || caches.match('./index.html')))
+        );
+        return;
+    }
+
     event.respondWith(
         caches.match(event.request).then(cached => {
             return cached || fetch(event.request).then(response => {
