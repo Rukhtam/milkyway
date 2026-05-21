@@ -32,11 +32,11 @@
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        body { 
-            font-family: 'Plus Jakarta Sans', sans-serif; 
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
             -webkit-tap-highlight-color: transparent;
-            user-select: none;
         }
+        button, [role="button"] { user-select: none; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         
         input[type="time"] {
@@ -126,6 +126,18 @@
             const v = localStorage.getItem('milk_reminder_time');
             return typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : '11:00';
         };
+        const loadCurrency = () => {
+            const v = localStorage.getItem('milk_currency');
+            return typeof v === 'string' && v.length > 0 && v.length <= 5 ? v : 'PKR';
+        };
+        const loadCycleStartDay = () => {
+            const v = parseInt(localStorage.getItem('milk_cycle_start_day'), 10);
+            return Number.isInteger(v) && v >= 1 && v <= 28 ? v : 1;
+        };
+        const loadViewMode = () => {
+            const v = localStorage.getItem('milk_view_mode');
+            return v === 'list' ? 'list' : 'grid';
+        };
 
         const App = () => {
             const [entries, setEntries] = useState(loadEntries);
@@ -134,6 +146,9 @@
             const [reminderTime, setReminderTime] = useState(loadReminderTime);
             const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('milk_notifications_enabled') === 'true');
             const [lastNotifiedDate, setLastNotifiedDate] = useState(() => localStorage.getItem('milk_last_notified') || "");
+            const [currency, setCurrency] = useState(loadCurrency);
+            const [billingCycleStartDay, setBillingCycleStartDay] = useState(loadCycleStartDay);
+            const [viewMode, setViewMode] = useState(loadViewMode);
             
             const [viewDate, setViewDate] = useState(new Date());
             const [showSettings, setShowSettings] = useState(false);
@@ -160,7 +175,10 @@
                 localStorage.setItem('milk_reminder_time', reminderTime);
                 localStorage.setItem('milk_notifications_enabled', notificationsEnabled);
                 localStorage.setItem('milk_last_notified', lastNotifiedDate);
-            }, [entries, pricePerKilo, reminderTime, notificationsEnabled, lastNotifiedDate]);
+                localStorage.setItem('milk_currency', currency);
+                localStorage.setItem('milk_cycle_start_day', String(billingCycleStartDay));
+                localStorage.setItem('milk_view_mode', viewMode);
+            }, [entries, pricePerKilo, reminderTime, notificationsEnabled, lastNotifiedDate, currency, billingCycleStartDay, viewMode]);
 
             const showStatus = (msg, type) => {
                 setStatusMessage({ msg, type });
@@ -212,37 +230,59 @@
                 return () => clearInterval(interval);
             }, [notificationsEnabled, reminderTime, entries, lastNotifiedDate]);
 
+            // Resolve the visible billing cycle from viewDate + the configured cycle start day.
+            // When billingCycleStartDay === 1, this collapses to a normal calendar month.
+            const cycleBounds = useMemo(() => {
+                const day = billingCycleStartDay;
+                let start;
+                if (viewDate.getDate() >= day) {
+                    start = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
+                } else {
+                    start = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, day);
+                }
+                const end = new Date(start.getFullYear(), start.getMonth() + 1, day - 1);
+                return { start, end };
+            }, [viewDate, billingCycleStartDay]);
+
             const calendarDays = useMemo(() => {
-                const year = viewDate.getFullYear();
-                const month = viewDate.getMonth();
-                const daysInMonth = new Date(year, month + 1, 0).getDate();
                 const days = [];
-                for (let i = 1; i <= daysInMonth; i++) {
-                    const date = new Date(year, month, i);
-                    const dateStr = toLocalDateStr(date);
+                const today = toLocalDateStr(new Date());
+                const cur = new Date(cycleBounds.start);
+                while (cur <= cycleBounds.end) {
+                    const dateStr = toLocalDateStr(cur);
                     days.push({
                         dateStr,
-                        day: i,
-                        weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-                        isToday: dateStr === toLocalDateStr(new Date())
+                        day: cur.getDate(),
+                        weekday: cur.toLocaleDateString('en-US', { weekday: 'short' }),
+                        weekdayIdx: cur.getDay(),
+                        isToday: dateStr === today
                     });
+                    cur.setDate(cur.getDate() + 1);
                 }
                 return days;
-            }, [viewDate]);
+            }, [cycleBounds]);
 
             const currentMonthEntries = useMemo(() => {
-                return entries.filter(e => {
-                    const d = parseLocal(e.date);
-                    return d.getMonth() === viewDate.getMonth() && d.getFullYear() === viewDate.getFullYear();
-                });
-            }, [entries, viewDate]);
+                const startStr = toLocalDateStr(cycleBounds.start);
+                const endStr = toLocalDateStr(cycleBounds.end);
+                return entries.filter(e => e.date >= startStr && e.date <= endStr);
+            }, [entries, cycleBounds]);
 
             const stats = useMemo(() => {
                 const totalKilos = currentMonthEntries.reduce((sum, e) => sum + e.amount, 0);
                 return { totalKilos, totalBill: totalKilos * pricePerKilo };
             }, [currentMonthEntries, pricePerKilo]);
 
+            const MAX_AMOUNT = 50;
             const addEntry = (amount, dateOverride = null) => {
+                if (!Number.isFinite(amount) || amount < 0) {
+                    showStatus("Enter a valid amount", "error");
+                    return;
+                }
+                if (amount > MAX_AMOUNT) {
+                    showStatus(`Max ${MAX_AMOUNT} kilos per day`, "error");
+                    return;
+                }
                 const targetDate = dateOverride || entryModal.date || toLocalDateStr(new Date());
                 setEntries(prev => {
                     const filtered = prev.filter(e => e.date !== targetDate);
@@ -256,16 +296,25 @@
             };
 
             const deleteEntry = (date) => setEntries(prev => prev.filter(e => e.date !== date));
-            const changeMonth = (offset) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1));
+            const changeMonth = (offset) => {
+                if (offset > 0) {
+                    const next = new Date(cycleBounds.end);
+                    next.setDate(next.getDate() + 1);
+                    setViewDate(next);
+                } else {
+                    const prev = new Date(cycleBounds.start);
+                    prev.setDate(prev.getDate() - 1);
+                    setViewDate(prev);
+                }
+            };
 
             const shareBill = async () => {
-                const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
                 const breakdown = currentMonthEntries
                     .sort((a, b) => a.date.localeCompare(b.date))
                     .map(e => `${parseLocal(e.date).getDate()}: ${e.amount === 0 ? 'No Milk' : e.amount + ' Kilos'}`)
                     .join('\n');
 
-                const text = `🥛 Milk Bill - ${monthName}\n\nTotal Kilos: ${stats.totalKilos}\nRate: PKR ${pricePerKilo}\nTotal Amount: PKR ${stats.totalBill.toLocaleString()}\n\nDaily Records:\n${breakdown}\n\nGenerated via MilkyWay`;
+                const text = `🥛 Milk Bill - ${cycleLabel}\n\nTotal Kilos: ${stats.totalKilos}\nRate: ${currency} ${pricePerKilo}\nTotal Amount: ${currency} ${stats.totalBill.toLocaleString()}\n\nDaily Records:\n${breakdown}\n\nGenerated via MilkyWay`;
 
                 // Prefer the native share sheet (mobile); user can pick WhatsApp directly.
                 if (navigator.share) {
@@ -301,7 +350,7 @@
                 const payload = {
                     version: 1,
                     exportedAt: new Date().toISOString(),
-                    data: { entries, pricePerKilo, reminderTime }
+                    data: { entries, pricePerKilo, reminderTime, currency, billingCycleStartDay }
                 };
                 const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
@@ -346,6 +395,12 @@
                         setPricePerKilo(obj.data.pricePerKilo);
                         setPriceDraft(String(obj.data.pricePerKilo));
                         setReminderTime(obj.data.reminderTime);
+                        if (typeof obj.data.currency === 'string' && obj.data.currency.length > 0 && obj.data.currency.length <= 5) {
+                            setCurrency(obj.data.currency);
+                        }
+                        if (Number.isInteger(obj.data.billingCycleStartDay) && obj.data.billingCycleStartDay >= 1 && obj.data.billingCycleStartDay <= 28) {
+                            setBillingCycleStartDay(obj.data.billingCycleStartDay);
+                        }
                         showStatus("Backup restored", "success");
                     } catch {
                         showStatus("Couldn't read backup", "error");
@@ -357,6 +412,17 @@
 
             const todayStr = toLocalDateStr(new Date());
             const loggedToday = entries.find(e => e.date === todayStr);
+
+            const cycleLabel = useMemo(() => {
+                if (billingCycleStartDay === 1) {
+                    return cycleBounds.start.toLocaleString('default', { month: 'long', year: 'numeric' });
+                }
+                const startStr = cycleBounds.start.toLocaleDateString('default', { day: 'numeric', month: 'short' });
+                const endStr = cycleBounds.end.toLocaleDateString('default', { day: 'numeric', month: 'short', year: 'numeric' });
+                return `${startStr} – ${endStr}`;
+            }, [cycleBounds, billingCycleStartDay]);
+
+            const isViewingCurrentCycle = todayStr >= toLocalDateStr(cycleBounds.start) && todayStr <= toLocalDateStr(cycleBounds.end);
 
             return (
                 <div className="min-h-screen text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-300">
@@ -397,7 +463,7 @@
                                 <Icon name="ChevronLeft" />
                             </button>
                             <div className="text-center">
-                                <h2 className="text-base font-extrabold">{viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
+                                <h2 className="text-base font-extrabold">{cycleLabel}</h2>
                             </div>
                             <button onClick={() => changeMonth(1)} className="p-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors">
                                 <Icon name="ChevronRight" />
@@ -414,7 +480,7 @@
                             </div>
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm relative overflow-hidden transition-colors duration-300">
                                 <Icon name="Calculator" className="mb-4 text-emerald-500" />
-                                <div className="text-3xl font-black text-slate-800 dark:text-slate-100 transition-colors">PKR {stats.totalBill.toLocaleString()}</div>
+                                <div className="text-3xl font-black text-slate-800 dark:text-slate-100 transition-colors">{currency} {stats.totalBill.toLocaleString()}</div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">Expected Bill</div>
                                 {currentMonthEntries.length > 0 && (
                                     <button onClick={shareBill} className="absolute top-4 right-4 p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full hover:scale-110 transition-transform">
@@ -424,7 +490,7 @@
                             </div>
                         </div>
 
-                        {viewDate.getMonth() === new Date().getMonth() && viewDate.getFullYear() === new Date().getFullYear() && (
+                        {isViewingCurrentCycle && (
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-blue-50 dark:border-slate-800 mb-8 shadow-sm transition-colors duration-300">
                                 <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest flex items-center gap-2">
                                     <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
@@ -448,30 +514,95 @@
                                     </div>
                                 ) : (
                                     <div className="flex gap-2 animate-in slide-in-from-top-2">
-                                        <input autoFocus type="number" step="0.5" value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
-                                        <button onClick={() => addEntry(parseFloat(customVal) || 0)} className="bg-blue-600 text-white px-6 rounded-2xl font-bold active:scale-95 transition-all">Add</button>
+                                        <input autoFocus type="number" step="0.5" min="0" max={MAX_AMOUNT} value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                                        <button onClick={() => addEntry(parseFloat(customVal))} className="bg-blue-600 text-white px-6 rounded-2xl font-bold active:scale-95 transition-all">Add</button>
                                     </div>
                                 )}
                             </div>
                         )}
 
                         <div className="mt-4">
-                            <button 
-                                onClick={() => setIsLogCollapsed(!isLogCollapsed)}
-                                className="w-full flex items-center justify-between mb-4 px-2 hover:bg-slate-100 dark:hover:bg-slate-900 p-3 rounded-2xl transition-colors duration-200"
-                            >
-                                <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between mb-4 px-2">
+                                <button
+                                    onClick={() => setIsLogCollapsed(!isLogCollapsed)}
+                                    className="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-900 p-3 rounded-2xl transition-colors duration-200 flex-1"
+                                >
                                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Monthly Records</h3>
                                     <span className="text-[10px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
                                         {currentMonthEntries.length} Saved
                                     </span>
-                                </div>
-                                <div className={`transition-transform duration-300 ${isLogCollapsed ? '' : 'rotate-180'}`}>
-                                    <Icon name="ChevronDown" className="text-slate-300" />
-                                </div>
-                            </button>
-                            
-                            <div className={`space-y-3 overflow-hidden transition-all-300 ${isLogCollapsed ? 'max-h-0 opacity-0' : 'max-h-[4000px] opacity-100'}`}>
+                                    <div className={`transition-transform duration-300 ml-auto ${isLogCollapsed ? '' : 'rotate-180'}`}>
+                                        <Icon name="ChevronDown" className="text-slate-300" />
+                                    </div>
+                                </button>
+                                {!isLogCollapsed && (
+                                    <div className="ml-2 flex bg-slate-100 dark:bg-slate-800 rounded-xl p-0.5">
+                                        <button
+                                            onClick={() => setViewMode('grid')}
+                                            className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white dark:bg-slate-900 shadow-sm text-blue-600' : 'text-slate-400'}`}
+                                            aria-label="Grid view"
+                                        >
+                                            <Icon name="LayoutGrid" size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => setViewMode('list')}
+                                            className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white dark:bg-slate-900 shadow-sm text-blue-600' : 'text-slate-400'}`}
+                                            aria-label="List view"
+                                        >
+                                            <Icon name="List" size={14} />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className={`overflow-hidden transition-all-300 ${isLogCollapsed ? 'max-h-0 opacity-0' : 'max-h-[4000px] opacity-100'}`}>
+                                {viewMode === 'grid' && calendarDays.length > 0 && (
+                                    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-4 mb-4 shadow-sm">
+                                        <div className="grid grid-cols-7 gap-1 mb-2">
+                                            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                                                <div key={d} className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider py-1">{d}</div>
+                                            ))}
+                                        </div>
+                                        <div className="grid grid-cols-7 gap-1.5">
+                                            {Array.from({ length: calendarDays[0].weekdayIdx }).map((_, i) => (
+                                                <div key={`pad-${i}`} className="aspect-square" />
+                                            ))}
+                                            {calendarDays.map(day => {
+                                                const entry = entries.find(e => e.date === day.dateStr);
+                                                const isFuture = day.dateStr > toLocalDateStr(new Date());
+                                                const baseClasses = 'aspect-square flex flex-col items-center justify-center rounded-xl text-[11px] font-bold border transition-all active:scale-95';
+                                                const stateClasses = entry
+                                                    ? (entry.amount === 0
+                                                        ? 'bg-slate-100 dark:bg-slate-800/60 text-slate-500 border-slate-200 dark:border-slate-700'
+                                                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800')
+                                                    : (isFuture
+                                                        ? 'opacity-30 bg-white dark:bg-slate-950 border-slate-100 dark:border-slate-900 pointer-events-none'
+                                                        : 'bg-white dark:bg-slate-950 border-dashed border-slate-200 dark:border-slate-800 text-slate-400 hover:border-blue-300');
+                                                const todayRing = day.isToday ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-900' : '';
+                                                return (
+                                                    <button
+                                                        key={day.dateStr}
+                                                        onClick={() => !isFuture && setEntryModal({ show: true, date: day.dateStr })}
+                                                        disabled={isFuture}
+                                                        className={`${baseClasses} ${stateClasses} ${todayRing}`}
+                                                    >
+                                                        <span className="leading-none">{day.day}</span>
+                                                        {entry && entry.amount > 0 && <span className="text-[8px] font-extrabold mt-0.5 opacity-80">{entry.amount}kg</span>}
+                                                        {entry && entry.amount === 0 && <Icon name="MinusCircle" size={8} className="mt-0.5" />}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="flex items-center justify-center gap-4 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-blue-200 dark:bg-blue-900/50 border border-blue-300 dark:border-blue-800" /> Logged</span>
+                                            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-slate-200 dark:bg-slate-700" /> Skipped</span>
+                                            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded border border-dashed border-slate-300" /> Empty</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {viewMode === 'list' && (
+                                <div className="space-y-3">
                                 {calendarDays.map(day => {
                                     const entry = entries.find(e => e.date === day.dateStr);
                                     const isFuture = day.dateStr > toLocalDateStr(new Date());
@@ -479,7 +610,7 @@
                                     
                                     return (
                                         <div key={day.dateStr} className={`group flex items-center justify-between p-4 rounded-3xl border transition-all duration-300 ${
-                                            entry ? (entry.amount === 0 ? 'bg-red-50/30 dark:bg-red-900/10 border-red-100 dark:border-red-900/20' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm') 
+                                            entry ? (entry.amount === 0 ? 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm')
                                             : (isFuture ? 'opacity-30 grayscale pointer-events-none' : 'bg-slate-100/50 dark:bg-slate-900/30 border-dashed border-slate-200 dark:border-slate-800')
                                         }`}>
                                             <div className="flex items-center gap-4">
@@ -494,10 +625,11 @@
                                                 <div>
                                                     {entry ? (
                                                         <>
-                                                            <div className={`font-bold transition-colors ${entry.amount === 0 ? 'text-red-500 italic' : 'text-slate-800 dark:text-slate-200'}`}>
-                                                                {entry.amount === 0 ? 'Skipped Delivery' : `${entry.amount} Kilos`}
+                                                            <div className={`font-bold transition-colors flex items-center gap-1.5 ${entry.amount === 0 ? 'text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-slate-200'}`}>
+                                                                {entry.amount === 0 && <Icon name="MinusCircle" size={14} className="text-slate-400" />}
+                                                                {entry.amount === 0 ? 'Skipped' : `${entry.amount} Kilos`}
                                                             </div>
-                                                            {entry.amount > 0 && <div className="text-[10px] font-bold text-slate-400">PKR {(entry.amount * pricePerKilo).toLocaleString()}</div>}
+                                                            {entry.amount > 0 && <div className="text-[10px] font-bold text-slate-400">{currency} {(entry.amount * pricePerKilo).toLocaleString()}</div>}
                                                         </>
                                                     ) : (
                                                         <div className="text-sm font-medium text-slate-300 italic">No record</div>
@@ -519,6 +651,8 @@
                                         </div>
                                     );
                                 })}
+                                </div>
+                                )}
                             </div>
 
                             {isLogCollapsed && (
@@ -556,8 +690,8 @@
                                 </div>
 
                                 <div className="flex gap-2 mb-4">
-                                    <input autoFocus type="number" step="0.5" value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
-                                    <button onClick={() => addEntry(parseFloat(customVal) || 0)} className="bg-blue-600 text-white px-6 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">Add</button>
+                                    <input autoFocus type="number" step="0.5" min="0" max={MAX_AMOUNT} value={customVal} onChange={e => setCustomVal(e.target.value)} placeholder="0.0" className="flex-1 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl px-5 py-4 font-bold text-lg focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                                    <button onClick={() => addEntry(parseFloat(customVal))} className="bg-blue-600 text-white px-6 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">Add</button>
                                 </div>
                             </div>
                         </div>
@@ -575,6 +709,18 @@
                                 
                                 <div className="space-y-6">
                                     <div>
+                                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 block">Currency</label>
+                                        <input
+                                            type="text"
+                                            value={currency}
+                                            onChange={e => setCurrency(e.target.value.toUpperCase().slice(0, 5))}
+                                            onBlur={() => { if (!currency) setCurrency('PKR'); }}
+                                            placeholder="PKR"
+                                            className="w-full bg-slate-50 dark:bg-slate-950 rounded-2xl px-5 py-4 font-bold text-xl border-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white uppercase tracking-widest"
+                                        />
+                                    </div>
+
+                                    <div>
                                         <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 block">Price per Kilo</label>
                                         <div className="relative">
                                             <input
@@ -591,7 +737,7 @@
                                                 }}
                                                 className="w-full bg-slate-50 dark:bg-slate-950 rounded-2xl px-5 py-4 font-bold text-xl border-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                                             />
-                                            <span className="absolute right-5 top-1/2 -translate-y-1/2 font-black text-slate-300 dark:text-slate-700 italic uppercase">PKR</span>
+                                            <span className="absolute right-5 top-1/2 -translate-y-1/2 font-black text-slate-300 dark:text-slate-700 italic uppercase">{currency}</span>
                                         </div>
                                     </div>
 
@@ -610,6 +756,23 @@
                                                 <input type="time" value={reminderTime} onChange={e => setReminderTime(e.target.value)} className="bg-transparent border-none font-bold text-sm focus:ring-0 p-0 flex-1 text-slate-900 dark:text-white" />
                                             </div>
                                         )}
+                                    </div>
+
+                                    <div className="pt-6 border-t dark:border-slate-800">
+                                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                            <Icon name="CalendarRange" size={12} className="text-blue-500" /> Billing Cycle Starts
+                                        </label>
+                                        <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl">
+                                            <select
+                                                value={billingCycleStartDay}
+                                                onChange={e => setBillingCycleStartDay(parseInt(e.target.value, 10))}
+                                                className="bg-transparent border-none font-bold text-sm focus:ring-0 p-0 flex-1 text-slate-900 dark:text-white"
+                                            >
+                                                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                                                    <option key={d} value={d}>{d === 1 ? '1st (Calendar Month)' : `${d}${d === 2 ? 'nd' : d === 3 ? 'rd' : d === 21 ? 'st' : d === 22 ? 'nd' : d === 23 ? 'rd' : 'th'} of each month`}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
 
                                     <div className="pt-6 border-t dark:border-slate-800">
@@ -634,7 +797,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.10
+                        MilkyWay 🥛 Version 2.12
                     </footer>
                 </div>
             );
