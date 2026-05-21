@@ -1,4 +1,4 @@
-const CACHE_NAME = 'milkyway-v2.9';
+const CACHE_NAME = 'milkyway-v2.10';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',

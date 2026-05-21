@@ -103,11 +103,35 @@
             return new Date(y, m - 1, d);
         };
 
+        // Defensive loaders — survive corrupted or partially-written localStorage values.
+        const loadEntries = () => {
+            try {
+                const raw = localStorage.getItem('milk_entries');
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return [];
+                return parsed.filter(e =>
+                    e && typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date) &&
+                    typeof e.amount === 'number' && Number.isFinite(e.amount) && e.amount >= 0
+                );
+            } catch {
+                return [];
+            }
+        };
+        const loadPrice = () => {
+            const v = parseFloat(localStorage.getItem('milk_price'));
+            return Number.isFinite(v) && v >= 0 ? v : 220;
+        };
+        const loadReminderTime = () => {
+            const v = localStorage.getItem('milk_reminder_time');
+            return typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : '11:00';
+        };
+
         const App = () => {
-            const [entries, setEntries] = useState(() => JSON.parse(localStorage.getItem('milk_entries') || '[]'));
-            const [pricePerKilo, setPricePerKilo] = useState(() => parseFloat(localStorage.getItem('milk_price') || '220'));
+            const [entries, setEntries] = useState(loadEntries);
+            const [pricePerKilo, setPricePerKilo] = useState(loadPrice);
             const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('milk_theme') === 'dark');
-            const [reminderTime, setReminderTime] = useState(() => localStorage.getItem('milk_reminder_time') || "11:00");
+            const [reminderTime, setReminderTime] = useState(loadReminderTime);
             const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('milk_notifications_enabled') === 'true');
             const [lastNotifiedDate, setLastNotifiedDate] = useState(() => localStorage.getItem('milk_last_notified') || "");
             
@@ -118,7 +142,7 @@
             const [customVal, setCustomVal] = useState("");
             const [statusMessage, setStatusMessage] = useState(null);
             const [isLogCollapsed, setIsLogCollapsed] = useState(true);
-            const [priceDraft, setPriceDraft] = useState(() => String(parseFloat(localStorage.getItem('milk_price') || '220')));
+            const [priceDraft, setPriceDraft] = useState(() => String(loadPrice()));
             const fileInputRef = useRef(null);
 
             useEffect(() => {
@@ -234,7 +258,7 @@
             const deleteEntry = (date) => setEntries(prev => prev.filter(e => e.date !== date));
             const changeMonth = (offset) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1));
 
-            const copyBillToClipboard = async () => {
+            const shareBill = async () => {
                 const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
                 const breakdown = currentMonthEntries
                     .sort((a, b) => a.date.localeCompare(b.date))
@@ -242,6 +266,17 @@
                     .join('\n');
 
                 const text = `🥛 Milk Bill - ${monthName}\n\nTotal Kilos: ${stats.totalKilos}\nRate: PKR ${pricePerKilo}\nTotal Amount: PKR ${stats.totalBill.toLocaleString()}\n\nDaily Records:\n${breakdown}\n\nGenerated via MilkyWay`;
+
+                // Prefer the native share sheet (mobile); user can pick WhatsApp directly.
+                if (navigator.share) {
+                    try {
+                        await navigator.share({ title: `Milk Bill - ${monthName}`, text });
+                        return;
+                    } catch (err) {
+                        if (err && err.name === 'AbortError') return; // user dismissed the sheet
+                        // any other failure falls through to clipboard
+                    }
+                }
 
                 try {
                     if (navigator.clipboard && window.isSecureContext) {
@@ -382,7 +417,7 @@
                                 <div className="text-3xl font-black text-slate-800 dark:text-slate-100 transition-colors">PKR {stats.totalBill.toLocaleString()}</div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">Expected Bill</div>
                                 {currentMonthEntries.length > 0 && (
-                                    <button onClick={copyBillToClipboard} className="absolute top-4 right-4 p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full hover:scale-110 transition-transform">
+                                    <button onClick={shareBill} className="absolute top-4 right-4 p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full hover:scale-110 transition-transform">
                                         <Icon name="Share2" size={16} />
                                     </button>
                                 )}
@@ -599,7 +634,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.9
+                        MilkyWay 🥛 Version 2.10
                     </footer>
                 </div>
             );
