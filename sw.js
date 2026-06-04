@@ -1,4 +1,4 @@
-const CACHE_NAME = 'milkyway-v2.13';
+const CACHE_NAME = 'milkyway-v2.14';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -7,14 +7,22 @@ const ASSETS_TO_CACHE = [
     './icons/icon-512.png'
 ];
 
-// Install: cache app shell
+// Install: cache app shell. We intentionally do NOT call skipWaiting() here;
+// the new SW stays in "waiting" state until the user confirms the update
+// via the in-app "Update available" banner (which posts SKIP_WAITING below).
 self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_NAME).then(cache => {
             return cache.addAll(ASSETS_TO_CACHE);
         })
     );
-    self.skipWaiting();
+});
+
+// Allow the page to opt into activating the waiting SW.
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
 });
 
 // Activate: clean old caches

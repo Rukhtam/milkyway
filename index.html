@@ -156,6 +156,7 @@
             const [showCustomInput, setShowCustomInput] = useState(false);
             const [customVal, setCustomVal] = useState("");
             const [statusMessage, setStatusMessage] = useState(null);
+            const [updateReady, setUpdateReady] = useState(false);
             const [isLogCollapsed, setIsLogCollapsed] = useState(true);
             const [priceDraft, setPriceDraft] = useState(() => String(loadPrice()));
             const fileInputRef = useRef(null);
@@ -179,6 +180,25 @@
                 localStorage.setItem('milk_cycle_start_day', String(billingCycleStartDay));
                 localStorage.setItem('milk_view_mode', viewMode);
             }, [entries, pricePerKilo, reminderTime, notificationsEnabled, lastNotifiedDate, currency, billingCycleStartDay, viewMode]);
+
+            // Listen for the "new SW waiting" signal from the SW registration script.
+            useEffect(() => {
+                const onAvailable = () => setUpdateReady(true);
+                window.addEventListener('milkyway:update-available', onAvailable);
+                // Cover the race where the SW announced before we mounted.
+                if (window.__milkywayWaitingWorker) setUpdateReady(true);
+                return () => window.removeEventListener('milkyway:update-available', onAvailable);
+            }, []);
+
+            const applyUpdate = () => {
+                const w = window.__milkywayWaitingWorker;
+                if (w) {
+                    w.postMessage({ type: 'SKIP_WAITING' });
+                    // The SW registration script reloads on `controllerchange`.
+                } else {
+                    window.location.reload();
+                }
+            };
 
             const showStatus = (msg, type) => {
                 setStatusMessage({ msg, type });
@@ -450,6 +470,18 @@
                             }`}>
                                 <Icon name={statusMessage.type === 'success' ? 'CheckCircle2' : 'X'} size={16} />
                                 {statusMessage.msg}
+                            </div>
+                        </div>
+                    )}
+
+                    {updateReady && (
+                        <div className="fixed inset-x-0 z-[70] flex justify-center px-4 pointer-events-none" style={{bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)'}}>
+                            <div className="px-5 py-3 rounded-full shadow-2xl border bg-blue-600 border-blue-400 text-white text-sm font-bold flex items-center gap-3 pointer-events-auto">
+                                <Icon name="RefreshCw" size={16} />
+                                <span>Update available</span>
+                                <button onClick={applyUpdate} className="bg-white text-blue-600 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-tight hover:bg-blue-50 transition-colors">
+                                    Update
+                                </button>
                             </div>
                         </div>
                     )}
@@ -823,13 +855,43 @@
         root.render(<App />);
     </script>
 
-    <!-- Register Service Worker for PWA -->
+    <!-- Register Service Worker for PWA, with an opt-in update flow -->
     <script>
         if ('serviceWorker' in navigator) {
+            const announceWaiting = (worker) => {
+                if (!worker) return;
+                window.__milkywayWaitingWorker = worker;
+                window.dispatchEvent(new CustomEvent('milkyway:update-available'));
+            };
+
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./sw.js')
-                    .then(reg => console.log('SW registered:', reg.scope))
+                    .then(reg => {
+                        // A new SW may already be waiting from a previous visit.
+                        if (reg.waiting && navigator.serviceWorker.controller) {
+                            announceWaiting(reg.waiting);
+                        }
+                        reg.addEventListener('updatefound', () => {
+                            const newWorker = reg.installing;
+                            if (!newWorker) return;
+                            newWorker.addEventListener('statechange', () => {
+                                // "installed" + an existing controller === a true update
+                                // (vs. the very first SW install on a fresh device).
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    announceWaiting(newWorker);
+                                }
+                            });
+                        });
+                    })
                     .catch(err => console.log('SW registration failed:', err));
+            });
+
+            // Reload once the new SW takes control so the user sees the new bundle.
+            let reloading = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (reloading) return;
+                reloading = true;
+                window.location.reload();
             });
         }
     </script>
