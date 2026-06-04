@@ -1,4 +1,6 @@
-const CACHE_NAME = 'milkyway-v2.14';
+// When bumping CACHE_NAME, also bump APP_VERSION in index.html — they must
+// move together so the visible footer matches the deployed bundle.
+const CACHE_NAME = 'milkyway-v2.15';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',

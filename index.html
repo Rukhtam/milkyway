@@ -72,6 +72,10 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
+        // Single source of truth for the visible app version. When bumping,
+        // also bump CACHE_NAME in sw.js — the two must move together.
+        const APP_VERSION = '2.15';
+
         const Icon = ({ name, className, size = 20 }) => {
             const iconRef = useRef(null);
             useEffect(() => {
@@ -845,7 +849,7 @@
                     )}
 
                     <footer className="text-center py-10 opacity-20 text-[10px] font-black uppercase tracking-[0.3em]">
-                        MilkyWay 🥛 Version 2.12
+                        MilkyWay 🥛 Version {APP_VERSION}
                     </footer>
                 </div>
             );
