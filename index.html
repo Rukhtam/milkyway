@@ -202,28 +202,44 @@
             // Notification reminder logic — checks every 30s
             useEffect(() => {
                 if (!notificationsEnabled) return;
+                const fireNotification = async () => {
+                    const title = 'MilkyWay Reminder 🥛';
+                    const opts = {
+                        body: "You haven't logged today's milk delivery yet!",
+                        icon: 'icons/icon-192.png',
+                        tag: 'milk-reminder'
+                    };
+                    // iOS PWAs don't support the `new Notification()` constructor;
+                    // they require ServiceWorkerRegistration.showNotification().
+                    try {
+                        if ('serviceWorker' in navigator) {
+                            const reg = await navigator.serviceWorker.ready;
+                            await reg.showNotification(title, opts);
+                            return;
+                        }
+                    } catch (_) { /* fall through to constructor */ }
+                    try {
+                        new Notification(title, opts);
+                    } catch (_) { /* swallow — never crash the UI */ }
+                };
                 const checkReminder = () => {
-                    const now = new Date();
-                    const todayLocal = toLocalDateStr(now);
-                    // Already notified today
-                    if (lastNotifiedDate === todayLocal) return;
-                    // Already logged today
-                    const loggedToday = entries.find(e => e.date === todayLocal);
-                    if (loggedToday) return;
-                    // Check if current time >= reminder time
-                    const [rHour, rMin] = reminderTime.split(':').map(Number);
-                    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-                    const reminderMinutes = rHour * 60 + rMin;
-                    if (currentMinutes >= reminderMinutes) {
-                        if (Notification.permission === 'granted') {
-                            new Notification('MilkyWay Reminder 🥛', {
-                                body: "You haven't logged today's milk delivery yet!",
-                                icon: 'icons/icon-192.png',
-                                tag: 'milk-reminder'
-                            });
+                    try {
+                        const now = new Date();
+                        const todayLocal = toLocalDateStr(now);
+                        // Already notified today
+                        if (lastNotifiedDate === todayLocal) return;
+                        // Already logged today
+                        const loggedToday = entries.find(e => e.date === todayLocal);
+                        if (loggedToday) return;
+                        // Check if current time >= reminder time
+                        const [rHour, rMin] = reminderTime.split(':').map(Number);
+                        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                        const reminderMinutes = rHour * 60 + rMin;
+                        if (currentMinutes >= reminderMinutes && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                            fireNotification();
                             setLastNotifiedDate(todayLocal);
                         }
-                    }
+                    } catch (_) { /* swallow — never crash the UI */ }
                 };
                 checkReminder();
                 const interval = setInterval(checkReminder, 30000);
