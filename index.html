@@ -28,7 +28,7 @@
     <!-- React and Babel for standalone execution -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -69,26 +69,46 @@
 <body class="bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script type="text/babel" data-presets="react">
         const { useState, useEffect, useMemo, useRef } = React;
 
         // Single source of truth for the visible app version. When bumping,
         // also bump CACHE_NAME in sw.js — the two must move together.
         const APP_VERSION = '2.15';
 
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { error: null }; }
+            static getDerivedStateFromError(e) { return { error: e }; }
+            render() {
+                if (this.state.error) {
+                    return (
+                        <div style={{padding:'2rem',textAlign:'center',fontFamily:'sans-serif'}}>
+                            <p style={{fontSize:'2rem'}}>🥛</p>
+                            <p style={{fontWeight:'bold',marginBottom:'0.5rem'}}>Something went wrong</p>
+                            <p style={{fontSize:'0.8rem',color:'#666',marginBottom:'1rem'}}>{String(this.state.error)}</p>
+                            <button onClick={() => window.location.reload()} style={{background:'#2563eb',color:'#fff',border:'none',borderRadius:'9999px',padding:'0.5rem 1.5rem',cursor:'pointer',fontWeight:'bold'}}>Reload</button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         const Icon = ({ name, className, size = 20 }) => {
             const iconRef = useRef(null);
             useEffect(() => {
-                if (window.lucide && iconRef.current) {
-                    const kebabName = name.replace(/([a-z])([A-Z0-9])/g, '$1-$2').toLowerCase();
-                    const i = document.createElement('i');
-                    i.setAttribute('data-lucide', kebabName);
-                    if (className) i.setAttribute('class', className);
-                    i.style.width = `${size}px`;
-                    i.style.height = `${size}px`;
-                    iconRef.current.innerHTML = '';
-                    iconRef.current.appendChild(i);
-                    window.lucide.createIcons({ root: iconRef.current });
+                if (window.lucide && typeof window.lucide.createIcons === 'function' && iconRef.current) {
+                    try {
+                        const kebabName = name.replace(/([a-z])([A-Z0-9])/g, '$1-$2').toLowerCase();
+                        const i = document.createElement('i');
+                        i.setAttribute('data-lucide', kebabName);
+                        if (className) i.setAttribute('class', className);
+                        i.style.width = `${size}px`;
+                        i.style.height = `${size}px`;
+                        iconRef.current.innerHTML = '';
+                        iconRef.current.appendChild(i);
+                        window.lucide.createIcons({ root: iconRef.current });
+                    } catch (_) {}
                 }
             }, [name, className, size]);
             return <span ref={iconRef} className="inline-flex items-center justify-center pointer-events-none" style={{ width: size, height: size }}></span>;
@@ -856,7 +876,7 @@
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 
     <!-- Register Service Worker for PWA, with an opt-in update flow -->
